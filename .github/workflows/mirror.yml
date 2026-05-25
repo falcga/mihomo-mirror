@@ -33,9 +33,9 @@ jobs:
           MIHOMO_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
             https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
           for ARCH in arm64 amd64 armv7; do
-            URL=$(echo "$MIHOMO_JSON" | jq -r ".assets[] | select(.name | test(\"mihomo-linux-$ARCH-.*\\\\.gz\") and (test(\"-go[0-9]+\") | not)) | .browser_download_url")
+            URL=$(echo "$MIHOMO_JSON" | jq -r ".assets[] | select(.name | test(\"mihomo-linux-$ARCH-.*\\\\.gz\") and (test(\"-go\") | not)) | .browser_download_url" | head -1)
             if [ -n "$URL" ] && [ "$URL" != "null" ]; then
-              echo "Downloading mihomo for $ARCH ..."
+              echo "Downloading mihomo for $ARCH from $URL"
               wget -q --show-progress "$URL" || { echo "Failed to download mihomo for $ARCH"; continue; }
             else
               echo "No valid URL for mihomo $ARCH, skipping"
