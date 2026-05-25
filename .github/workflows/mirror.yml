@@ -9,6 +9,8 @@ env:
   GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
   GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
   RELEASE_TAG: "mirror-latest"
+  # GITHUB_TOKEN автоматически создаётся раннером, передаём его явно
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   mirror:
@@ -18,59 +20,54 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Download artifacts (mihomo + shell2http)
         run: |
-          cat > download.sh << 'EOF'
-          #!/bin/bash
-          set -e
+          set -e -o pipefail
           mkdir -p artifacts
           cd artifacts
 
           # ----- mihomo -----
           echo "=== Downloading mihomo ==="
-          MIHOMO_JSON=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
+          MIHOMO_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
           for ARCH in arm64 amd64 armv7; do
-            FILTER=".assets[] | select(.name | test(\"mihomo-linux-$ARCH-.*\\\\.gz\") and (test(\"-go[0-9]+\") | not)) | .browser_download_url"
-            URL=$(echo "$MIHOMO_JSON" | jq -r "$FILTER")
+            URL=$(echo "$MIHOMO_JSON" | jq -r ".assets[] | select(.name | test(\"mihomo-linux-$ARCH-.*\\\\.gz\") and (test(\"-go[0-9]+\") | not)) | .browser_download_url")
             if [ -n "$URL" ] && [ "$URL" != "null" ]; then
               echo "Downloading mihomo for $ARCH ..."
               wget -q --show-progress "$URL"
+            else
+              echo "No valid URL for mihomo $ARCH, skipping"
             fi
           done
 
           # ----- shell2http -----
           echo "=== Downloading shell2http ==="
-          SHELL2HTTP_JSON=$(curl -s https://api.github.com/repos/msoap/shell2http/releases/latest)
+          SHELL2HTTP_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            https://api.github.com/repos/msoap/shell2http/releases/latest)
           for ARCH in arm64 amd64 armv6; do
-            FILTER=".assets[] | select(.name | test(\"shell2http_.*_linux_$ARCH\\\\.tar\\\\.gz\")) | .browser_download_url"
-            URL=$(echo "$SHELL2HTTP_JSON" | jq -r "$FILTER")
+            URL=$(echo "$SHELL2HTTP_JSON" | jq -r ".assets[] | select(.name | test(\"shell2http_.*_linux_$ARCH\\\\.tar\\\\.gz\")) | .browser_download_url")
             if [ -n "$URL" ] && [ "$URL" != "null" ]; then
               echo "Downloading shell2http for $ARCH ..."
               wget -q --show-progress "$URL"
+            else
+              echo "No valid URL for shell2http $ARCH, skipping"
             fi
           done
 
-          echo "Download completed:"
+          echo "Download completed. Files:"
           ls -la
-          EOF
-          chmod +x download.sh
-          ./download.sh
 
-      - name: Install jq (JSON parser)
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Delete existing release (if any) – to refresh assets
+      - name: Delete existing release (ignore if not exists)
         run: |
-          set +e
-          curl --fail -X DELETE \
-            -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-            "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/releases/$RELEASE_TAG"
-          set -e
+          curl -X DELETE -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+            "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/releases/$RELEASE_TAG" || true
 
       - name: Create a new release
         run: |
-          curl -X POST \
-            -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+          curl -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{
               \"name\": \"Mirror of mihomo & shell2http\",
@@ -80,16 +77,14 @@ jobs:
             }" \
             "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/releases"
 
-      - name: Upload each artifact as a release link (asset)
+      - name: Upload each artifact as a release asset
         run: |
           for file in artifacts/*; do
             filename=$(basename "$file")
             echo "Uploading $filename ..."
-            curl -X POST \
-              -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+            curl -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
               -F "file=@$file" \
               -F "name=$filename" \
-              -F "url=./uploads/$filename" \
               "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/releases/$RELEASE_TAG/assets?link_type=package"
           done
 
