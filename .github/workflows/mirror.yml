@@ -1,4 +1,4 @@
-name: Mirror latest binaries to GitLab Releases
+name: Mirror binaries to GitLab Releases (via Generic Packages)
 
 on:
   schedule:
@@ -59,33 +59,70 @@ jobs:
           echo "Download completed. Files:"
           ls -la
 
-      - name: Delete existing release (ignore if not exists)
+      - name: Upload files to GitLab Generic Package Registry
+        run: |
+          for file in artifacts/*; do
+            filename=$(basename "$file")
+            # Определяем имя пакета и версию
+            if [[ $filename =~ ^mihomo-linux-(arm64|amd64|armv7)-v([0-9.]+)\.gz$ ]]; then
+              PACKAGE="mihomo"
+              VERSION="v${BASH_REMATCH[2]}"
+              ARCH="${BASH_REMATCH[1]}"
+            elif [[ $filename =~ ^shell2http_([0-9.]+)_linux_(arm64|amd64|armv6)\.tar\.gz$ ]]; then
+              PACKAGE="shell2http"
+              VERSION="v${BASH_REMATCH[1]}"
+              ARCH="${BASH_REMATCH[2]}"
+            else
+              echo "Skipping unknown file $filename"
+              continue
+            fi
+            echo "Uploading $filename as $PACKAGE/$VERSION (arch $ARCH)"
+            curl --request PUT \
+              --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+              --upload-file "$file" \
+              "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/packages/generic/$PACKAGE/$VERSION/$filename"
+            echo ""
+          done
+
+      - name: Delete existing release (ignore errors)
         run: |
           curl -X DELETE -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
             "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/releases/$RELEASE_TAG" || true
 
-      - name: Create a new release
+      - name: Create release with links to packages
         run: |
-          curl -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-            -H "Content-Type: application/json" \
+          # Собираем JSON-массив ссылок на пакеты
+          LINKS_JSON="["
+          for file in artifacts/*; do
+            filename=$(basename "$file")
+            if [[ $filename =~ ^mihomo-linux-(arm64|amd64|armv7)-v([0-9.]+)\.gz$ ]]; then
+              PACKAGE="mihomo"
+              VERSION="v${BASH_REMATCH[2]}"
+            elif [[ $filename =~ ^shell2http_([0-9.]+)_linux_(arm64|amd64|armv6)\.tar\.gz$ ]]; then
+              PACKAGE="shell2http"
+              VERSION="v${BASH_REMATCH[1]}"
+            else
+              continue
+            fi
+            # Прямая ссылка на пакет
+            URL="https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/packages/generic/$PACKAGE/$VERSION/$filename"
+            # Для удобства можно добавить ссылку на UI пакетов, но прямая работает для wget
+            LINKS_JSON+="{\"name\":\"$filename\",\"url\":\"$URL\",\"link_type\":\"package\"},"
+          done
+          LINKS_JSON=${LINKS_JSON%,}  # удаляем последнюю запятую
+          LINKS_JSON+="]"
+
+          curl -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" -H "Content-Type: application/json" \
             -d "{
               \"name\": \"Mirror of mihomo & shell2http\",
               \"tag_name\": \"$RELEASE_TAG\",
               \"description\": \"Automatically mirrored binaries from GitHub releases\nUpdated: $(date -u +'%Y-%m-%d %H:%M:%S UTC')\",
-              \"ref\": \"main\"
+              \"ref\": \"main\",
+              \"assets\": {
+                \"links\": $LINKS_JSON
+              }
             }" \
             "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/releases"
-
-      - name: Upload each artifact as a release asset
-        run: |
-          for file in artifacts/*; do
-            filename=$(basename "$file")
-            echo "Uploading $filename ..."
-            curl -X POST -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-              -F "file=@$file" \
-              -F "name=$filename" \
-              "https://gitlab.com/api/v4/projects/$GITLAB_PROJECT_ID/releases/$RELEASE_TAG/assets?link_type=package"
-          done
 
       - name: Cleanup
         if: always()
