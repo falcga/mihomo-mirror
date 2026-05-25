@@ -2,14 +2,13 @@ name: Mirror latest binaries to GitLab Releases
 
 on:
   schedule:
-    - cron: '0 6 * * *'   # каждый день в 6:00 UTC
-  workflow_dispatch:       # ручной запуск
+    - cron: '0 6 * * *'
+  workflow_dispatch:
 
 env:
   GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
   GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
   RELEASE_TAG: "mirror-latest"
-  # GITHUB_TOKEN автоматически создаётся раннером, передаём его явно
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
@@ -37,7 +36,7 @@ jobs:
             URL=$(echo "$MIHOMO_JSON" | jq -r ".assets[] | select(.name | test(\"mihomo-linux-$ARCH-.*\\\\.gz\") and (test(\"-go[0-9]+\") | not)) | .browser_download_url")
             if [ -n "$URL" ] && [ "$URL" != "null" ]; then
               echo "Downloading mihomo for $ARCH ..."
-              wget -q --show-progress "$URL"
+              wget -q --show-progress "$URL" || { echo "Failed to download mihomo for $ARCH"; continue; }
             else
               echo "No valid URL for mihomo $ARCH, skipping"
             fi
@@ -51,7 +50,7 @@ jobs:
             URL=$(echo "$SHELL2HTTP_JSON" | jq -r ".assets[] | select(.name | test(\"shell2http_.*_linux_$ARCH\\\\.tar\\\\.gz\")) | .browser_download_url")
             if [ -n "$URL" ] && [ "$URL" != "null" ]; then
               echo "Downloading shell2http for $ARCH ..."
-              wget -q --show-progress "$URL"
+              wget -q --show-progress "$URL" || { echo "Failed to download shell2http for $ARCH"; continue; }
             else
               echo "No valid URL for shell2http $ARCH, skipping"
             fi
